@@ -146,17 +146,36 @@ function getPrompts() {
     .filter(Boolean);
 }
 
-function choosePrompt() {
-  const prompts = getPrompts();
 
-  if (searchMode.value === "random") {
-    return prompts[Math.floor(Math.random() * prompts.length)];
+let remainingPrompts = [];
+let previousPromptList = "";
+
+function choosePrompt() {
+  const prompts = [...new Set(getPrompts())];
+
+  if (!prompts.length) return null;
+
+  const currentList = JSON.stringify(prompts);
+
+  if (currentList !== previousPromptList) {
+    previousPromptList = currentList;
+    remainingPrompts = [];
   }
 
-  const prompt = prompts[searchIndex % prompts.length];
-  searchIndex++;
-  return prompt;
+  if (remainingPrompts.length === 0) {
+    remainingPrompts = [...prompts];
+
+    for (let i = remainingPrompts.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+
+      [remainingPrompts[i], remainingPrompts[j]] =
+        [remainingPrompts[j], remainingPrompts[i]];
+    }
+  }
+
+  return remainingPrompts.pop();
 }
+
 
 async function getVideos(prompt, key) {
   if (searchCache.has(prompt)) {
@@ -417,7 +436,8 @@ document.getElementById("testSpotifySearch").onclick = async () => {
     return;
   }
 
-const prompt = choosePrompt();
+const prompt =
+  prompts[Math.floor(Math.random() * prompts.length)];
 
   result.textContent = "Searching Spotify for: " + prompt;
 
@@ -596,8 +616,7 @@ document.getElementById("testSpotifySearch").onclick =
       // Activate audio before asynchronous searching.
       const deviceId = await prepareSpotifyAudio();
 
-      const prompt =
-        prompts[Math.floor(Math.random() * prompts.length)];
+      const prompt = choosePrompt();
 
       const params = new URLSearchParams({
         q: prompt,
