@@ -693,6 +693,84 @@ document.getElementById("testSpotifySearch").onclick =
     }
   };
 
+/* COMBINED YOUTUBE AND SPOTIFY CONTROLS */
+
+function chooseMusicPlatform() {
+  const selected =
+    document.getElementById("musicPlatform").value;
+
+  if (selected === "both") {
+    return Math.random() < 0.5 ? "youtube" : "spotify";
+  }
+
+  return selected;
+}
+
+function combinedNextSearch() {
+  if (!getPrompts().length) {
+    statusText.textContent = "Enter search prompts first.";
+    return;
+  }
+
+  const platform = chooseMusicPlatform();
+
+  if (platform === "spotify") {
+    running = false;
+    requestNumber++;
+    pendingVideo = null;
+
+    if (playerReady) {
+      player.stopVideo();
+    }
+
+    statusText.textContent = "Searching Spotify...";
+
+    // Use the existing Spotify search and player.
+    document.getElementById("testSpotifySearch").click();
+
+  } else {
+    if (!apiKeyInput.value.trim()) {
+      statusText.textContent =
+        "Enter your YouTube API key.";
+      return;
+    }
+
+    // Stop Spotify before playing YouTube.
+    if (spotifyAudioPlayer) {
+      spotifyAudioPlayer.pause().catch(console.error);
+    }
+
+    statusText.textContent = "Searching YouTube...";
+    nextSearch();
+  }
+}
+
+// Connect both buttons to the combined system.
+document.getElementById("startButton").onclick = () => {
+  searchIndex = 0;
+  combinedNextSearch();
+};
+
+document.getElementById("skipButton").onclick =
+  combinedNextSearch;
+
+// Stop both platforms.
+document.getElementById("stopButton").onclick = () => {
+  running = false;
+  requestNumber++;
+  pendingVideo = null;
+
+  if (playerReady) {
+    player.stopVideo();
+  }
+
+  if (spotifyAudioPlayer) {
+    spotifyAudioPlayer.pause().catch(console.error);
+  }
+
+  statusText.textContent = "Stopped.";
+};
+
 </script>
 
 </body>
