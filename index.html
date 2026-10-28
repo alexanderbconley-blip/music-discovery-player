@@ -59,12 +59,7 @@ iframe { max-width: 100%; }
 <textarea id="searchPrompts" rows="6"
   placeholder="Enter one search prompt per line"></textarea>
 
-<h3>Search Settings</h3>
-<label for="searchMode">Search order:</label>
-<select id="searchMode">
-  <option value="random">Random</option>
-  <option value="rotation">Rotation</option>
-</select>
+
 
 <h3>Music Platform</h3>
 
@@ -87,7 +82,6 @@ iframe { max-width: 100%; }
 
 <script>
 const promptsInput = document.getElementById("searchPrompts");
-const searchMode = document.getElementById("searchMode");
 const statusText = document.getElementById("status");
 const titleText = document.getElementById("videoTitle");
 const apiKeyInput = document.getElementById("apiKey");
