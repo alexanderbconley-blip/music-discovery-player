@@ -417,7 +417,7 @@ document.getElementById("testSpotifySearch").onclick = async () => {
     return;
   }
 
-  const prompt = prompts[Math.floor(Math.random() * prompts.length)];
+const prompt = choosePrompt();
 
   result.textContent = "Searching Spotify for: " + prompt;
 
