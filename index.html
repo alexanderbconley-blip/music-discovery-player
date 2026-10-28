@@ -398,6 +398,77 @@ if (sessionStorage.getItem("spotify_access_token")) {
     "Spotify authorized for this browser session.";
 }
 
+document.getElementById("testSpotifySearch").onclick = async () => {
+  const result = document.getElementById("spotifySearchResult");
+  const token = sessionStorage.getItem("spotify_access_token");
+
+  if (!token) {
+    result.textContent = "Please connect Spotify Premium again.";
+    return;
+  }
+
+  const prompts = getPrompts();
+
+  if (!prompts.length) {
+    result.textContent = "Enter at least one search prompt.";
+    return;
+  }
+
+  const prompt = prompts[Math.floor(Math.random() * prompts.length)];
+
+  result.textContent = "Searching Spotify for: " + prompt;
+
+  try {
+    const params = new URLSearchParams({
+      q: prompt,
+      type: "track",
+      limit: "10"
+    });
+
+    const response = await fetch(
+      "https://api.spotify.com/v1/search?" + params,
+      {
+        headers: {
+          Authorization: "Bearer " + token
+        }
+      }
+    );
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data.error?.message || "Spotify search failed");
+    }
+
+    const tracks = data.tracks?.items || [];
+
+    if (!tracks.length) {
+      result.textContent = "No matching tracks found.";
+      return;
+    }
+
+    const track = tracks[Math.floor(Math.random() * tracks.length)];
+
+    result.replaceChildren();
+
+    const description = document.createElement("span");
+    description.textContent =
+      "Found: " + track.name + " — " +
+      track.artists.map(a => a.name).join(", ") + " ";
+
+    const link = document.createElement("a");
+    link.href = track.external_urls.spotify;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    link.textContent = "Open in Spotify";
+
+    result.append(description, link);
+
+  } catch (error) {
+    result.textContent = "Error: " + error.message;
+  }
+};
+
 </script>
 
 </body>
