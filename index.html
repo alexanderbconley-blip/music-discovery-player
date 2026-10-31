@@ -4,786 +4,633 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Music Discovery Player</title>
-
 <style>
-body {
-  font-family: Arial, sans-serif;
-  background: #f5f5f5;
-  padding: 20px;
-  max-width: 800px;
-  margin: auto;
-  color: #222;
-}
-textarea, input, select {
-  width: 100%;
-  padding: 12px;
-  box-sizing: border-box;
-  margin: 7px 0;
-  font-size: 16px;
-}
-button {
-  padding: 12px 16px;
-  margin: 6px 4px 6px 0;
-  font-size: 15px;
-  border-radius: 6px;
-  border: 1px solid #aaa;
-  cursor: pointer;
-}
-button:hover { background: #ddd; }
-#player {
-  margin-top: 15px;
-  min-height: 250px;
-}
-#status { font-weight: bold; }
-iframe { max-width: 100%; }
+  body { font-family: Arial, sans-serif; background:#f5f5f5; color:#222;
+    max-width:800px; padding:20px; margin:auto; line-height:1.45; }
+  textarea, input:not([type="checkbox"]), select { width:100%; padding:12px;
+    box-sizing:border-box; margin:7px 0; font-size:16px; }
+  button { padding:12px 16px; margin:6px 4px 6px 0; font-size:15px;
+    border-radius:6px; border:1px solid #aaa; cursor:pointer; }
+  button:hover { background:#ddd; }
+  button:disabled { cursor:not-allowed; opacity:.6; }
+  label { cursor:pointer; }
+  input[type="checkbox"] { width:auto; margin-right:8px; }
+  small, .note { color:#555; }
+  #player { margin-top:15px; min-height:250px; }
+  #status { font-weight:bold; }
+  iframe { max-width:100%; }
+  #translationStatus, #spotifyStatus { overflow-wrap:anywhere; }
 </style>
 </head>
-
 <body>
-
 <h1>Music Discovery Player</h1>
-  
-<button id="spotifyLogin">Connect Spotify Premium</button>
-<p id="spotifyStatus">Spotify not connected.</p>
-<button id="testSpotifySearch" hidden>Test Spotify Search</button>
-<p id="spotifySearchResult"></p>
 <p>Discover and play songs from your search prompts.</p>
 
+<button id="spotifyLogin" type="button">Connect Spotify Premium</button>
+<p id="spotifyStatus" aria-live="polite">Spotify not connected.</p>
+
 <h3>YouTube API Key</h3>
-<input id="apiKey" type="password"
-  placeholder="Enter restricted YouTube API key">
-<p><small>For testing. Your key is not saved.</small></p>
+<input id="apiKey" type="password" autocomplete="off"
+  placeholder="Enter your restricted YouTube API key">
+<p><small>For testing. Your key is not saved in the page or sent to Spotify or the translation service. It is sent directly to Google's YouTube API for each YouTube search.</small></p>
 
 <h3>Search Prompts</h3>
-<textarea id="searchPrompts" rows="6"
-  placeholder="Enter one search prompt per line"></textarea>
+<textarea id="searchPrompts" rows="6" placeholder="Enter one English search prompt per line"></textarea>
 
-
+<h3>Automatic Translation</h3>
+<label><input id="autoTranslate" type="checkbox">Translate my search prompts</label>
+<p><small>Enter prompts in English. When translation is off, the player searches exactly what you entered.</small></p>
+<label for="translationLanguage">Search language</label>
+<select id="translationLanguage" disabled>
+  <option value="random">Random languages</option>
+  <option value="es">Spanish</option>
+  <option value="fr">French</option>
+  <option value="pt">Portuguese</option>
+  <option value="de">German</option>
+  <option value="it">Italian</option>
+  <option value="ja">Japanese</option>
+  <option value="ko">Korean</option>
+  <option value="zh-CN">Chinese (Simplified)</option>
+  <option value="ar">Arabic</option>
+  <option value="hi">Hindi</option>
+  <option value="sw">Swahili</option>
+  <option value="tr">Turkish</option>
+  <option value="nl">Dutch</option>
+  <option value="pl">Polish</option>
+  <option value="ru">Russian</option>
+  <option value="id">Indonesian</option>
+  <option value="tl">Filipino / Tagalog</option>
+  <option value="vi">Vietnamese</option>
+  <option value="th">Thai</option>
+  <option value="uk">Ukrainian</option>
+  <option value="el">Greek</option>
+  <option value="he">Hebrew</option>
+  <option value="fa">Persian</option>
+  <option value="bn">Bengali</option>
+</select>
+<p><small>Random mode rotates through these 24 languages without repeating until a cycle ends. If a search finds no unplayed songs, it can try up to two more languages and then English. When you select one language, it searches only that language; results are not guaranteed to be sung in that language.</small></p>
+<p id="translationStatus" aria-live="polite">Translation is off.</p>
 
 <h3>Music Platform</h3>
-
 <select id="musicPlatform">
   <option value="both">YouTube and Spotify</option>
   <option value="youtube">YouTube Only</option>
   <option value="spotify">Spotify Only</option>
 </select>
-
 <div>
-  <button id="startButton">Start Discovery</button>
-  <button id="skipButton">Next Search</button>
-  <button id="stopButton">Stop</button>
+  <button id="startButton" type="button">Start Discovery</button>
+  <button id="skipButton" type="button">Next Search</button>
+  <button id="stopButton" type="button">Stop</button>
 </div>
 
 <h3>Now Playing</h3>
-<p id="status">Ready to discover music.</p>
+<p id="status" aria-live="polite">Ready to discover music.</p>
 <p id="videoTitle"></p>
 <div id="player"></div>
 
 <script>
-const promptsInput = document.getElementById("searchPrompts");
-const statusText = document.getElementById("status");
-const titleText = document.getElementById("videoTitle");
-const apiKeyInput = document.getElementById("apiKey");
+"use strict";
 
-let player = null;
-let playerReady = false;
-let pendingVideo = null;
-let running = false;
-let searchIndex = 0;
+// All code lives in this file; no build tools or local installation required.
+const $ = id => document.getElementById(id);
+const promptsInput = $("searchPrompts");
+const apiKeyInput = $("apiKey");
+const statusText = $("status");
+const titleText = $("videoTitle");
+const spotifyStatus = $("spotifyStatus");
+const translationToggle = $("autoTranslate");
+const languageSelector = $("translationLanguage");
+const translationStatus = $("translationStatus");
+
+const spotifyClientId = "57ba085f8fe8486aa6c7167eb6207d72";
+const spotifyRedirect = "https://alexanderbconley-blip.github.io/music-discovery-player/";
+
+const playedYouTube = new Set();
+const playedSpotify = new Set();
+const videoSearchCache = new Map();
+const translationCache = new Map();
+
+let pendingYouTubeVideo = null;
+let youtubePlayer = null;
+let youtubeReady = false;
+let spotifyPlayer = null;
+let spotifyDeviceId = null;
+let spotifyDevicePromise = null;
+let spotifyTransferred = false;
+let spotifySdkReady = false;
+
+// Changing the request number immediately invalidates pending searches.
 let requestNumber = 0;
+let stopped = true;
+let activeController = null;
 
-const playedVideos = new Set();
-const searchCache = new Map();
+function shuffle(items) {
+  const copy = [...items];
+  for (let i = copy.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy;
+}
+
+function getPrompts() {
+  return [...new Set(promptsInput.value.split("\n").map(x => x.trim()).filter(Boolean))];
+}
+
+let promptSignature = "";
+let pendingPrompts = [];
+function choosePrompt() {
+  const prompts = getPrompts();
+  if (!prompts.length) return null;
+  const signature = JSON.stringify(prompts);
+  if (promptSignature !== signature) {
+    promptSignature = signature;
+    pendingPrompts = [];
+  }
+  if (!pendingPrompts.length) pendingPrompts = shuffle(prompts);
+  return pendingPrompts.pop();
+}
+
+const languageNames = new Map(
+  [...languageSelector.options]
+    .filter(option => option.value !== "random")
+    .map(option => [option.value, option.textContent])
+);
+const languageCodes = [...languageNames.keys()];
+let pendingLanguages = [];
+function nextRandomLanguage() {
+  if (!pendingLanguages.length) pendingLanguages = shuffle(languageCodes);
+  return pendingLanguages.pop();
+}
+
+translationToggle.addEventListener("change", () => {
+  languageSelector.disabled = !translationToggle.checked;
+  translationStatus.textContent = translationToggle.checked
+    ? "Translation enabled — " + languageSelector.options[languageSelector.selectedIndex].text
+    : "Translation is off.";
+});
+languageSelector.addEventListener("change", () => {
+  translationStatus.textContent = "Selected: " +
+    languageSelector.options[languageSelector.selectedIndex].text;
+});
+
+function isCurrent(requestId) {
+  return !stopped && requestId === requestNumber;
+}
+
+function cancelPendingWork() {
+  ++requestNumber;
+  if (activeController) activeController.abort();
+  activeController = new AbortController();
+  return requestNumber;
+}
+
+async function translateTheme(theme, language, signal) {
+  const key = JSON.stringify([theme, language]);
+  if (translationCache.has(key)) return translationCache.get(key);
+  const params = new URLSearchParams({q: theme, langpair: "en|" + language});
+  const response = await fetch(
+    "https://api.mymemory.translated.net/get?" + params, {signal}
+  );
+  if (!response.ok) throw new Error("Translation HTTP " + response.status);
+  const data = await response.json();
+  const translated = data.responseData?.translatedText?.trim();
+  if (Number(data.responseStatus) !== 200 || !translated ||
+      /MYMEMORY WARNING|DAILY FREE QUOTA|QUERY LENGTH LIMIT/i.test(translated)) {
+    throw new Error(data.responseDetails || "Translation unavailable or quota reached");
+  }
+  translationCache.set(key, translated);
+  return translated;
+}
+
+// Generate candidates only as needed: normally just one language and one search.
+// Up to 3 attempts if a random-language query yields no new tracks.
+async function* searchQueries(theme, requestId, signal) {
+  if (!translationToggle.checked) {
+    translationStatus.textContent = "English prompt: " + theme;
+    yield {query: theme, language: "English"};
+    return;
+  }
+  const selected = languageSelector.value;
+  const codes = [];
+  if (selected === "random") {
+    while (codes.length < 3) {
+      const code = nextRandomLanguage();
+      if (!codes.includes(code)) codes.push(code);
+    }
+  } else {
+    codes.push(selected);
+  }
+  const visited = new Set();
+  let translatedCandidates = 0;
+
+  for (const code of codes) {
+    if (!isCurrent(requestId)) return;
+    if (visited.has(code)) continue;
+    visited.add(code);
+    const name = languageNames.get(code) || code;
+    translationStatus.textContent = "Translating '" + theme + "' into " + name + "...";
+    try {
+      const translated = await translateTheme(theme, code, signal);
+      if (!isCurrent(requestId)) return;
+      if (!translated) continue;
+      // A word may legitimately be spelled the same in two languages.
+      // Still search it if the teacher explicitly selected that language.
+      if (selected === "random" &&
+          translated.toLocaleLowerCase() === theme.toLocaleLowerCase()) continue;
+      translatedCandidates++;
+      translationStatus.textContent = name + ": " + translated;
+      yield {query: translated, language: name};
+    } catch (error) {
+      if (!isCurrent(requestId) || error.name === "AbortError") return;
+      translationStatus.textContent = name + " translation failed: " + error.message;
+      // A selected language must not silently switch to English.
+    }
+  }
+  if (selected === "random" && isCurrent(requestId)) {
+    translationStatus.textContent = "English fallback: " + theme;
+    yield {query: theme, language: "English fallback"};
+  } else if (selected !== "random" && translatedCandidates === 0 && isCurrent(requestId)) {
+    throw new Error("Translation failed for " + (languageNames.get(selected) || selected) +
+      ". Try another language or turn translation off.");
+  }
+}
+
+function stopYouTube() {
+  pendingYouTubeVideo = null;
+  if (youtubeReady && youtubePlayer) {
+    try { youtubePlayer.stopVideo(); } catch (_) {}
+  }
+}
+async function pauseSpotify() {
+  if (spotifyPlayer) {
+    try { await spotifyPlayer.pause(); } catch (error) {
+      console.warn("Spotify pause failed:", error);
+    }
+  }
+}
 
 window.onYouTubeIframeAPIReady = function () {
-  player = new YT.Player("player", {
-    width: "100%",
-    height: "360",
+  youtubePlayer = new YT.Player("player", {
+    width: "100%", height: "360",
     playerVars: {
       playsinline: 1,
       autoplay: 1,
-      origin: window.location.origin
+      // file:// pages have an opaque origin; the published HTTPS page does not.
+      ...(window.location.protocol === "https:" ? {origin: window.location.origin} : {})
     },
     events: {
-      onReady: function () {
-        playerReady = true;
-
-        player.getIframe().setAttribute(
-          "allow",
-          "autoplay; encrypted-media; fullscreen; picture-in-picture"
-        );
-
-        if (pendingVideo) {
-          playSelectedVideo(pendingVideo);
-        }
+      onReady() {
+        youtubeReady = true;
+        youtubePlayer.getIframe().setAttribute("allow",
+          "autoplay; encrypted-media; fullscreen; picture-in-picture");
+        if (pendingYouTubeVideo) playYouTube(pendingYouTubeVideo);
       },
-      onStateChange: function (event) {
-        if (event.data === YT.PlayerState.PLAYING) {
-          statusText.textContent = "Now playing!";
-        }
+      onStateChange(event) {
+        if (event.data === YT.PlayerState.PLAYING && !stopped)
+          statusText.textContent = "Now playing on YouTube.";
       },
-      onAutoplayBlocked: function () {
-        statusText.textContent =
-          "Automatic playback was blocked by the browser.";
+      onAutoplayBlocked() {
+        statusText.textContent = "Browser blocked autoplay; click Play in the video.";
       },
-      onError: function (event) {
-        statusText.textContent =
-          "YouTube playback error: " + event.data;
+      onError(event) {
+        statusText.textContent = "YouTube player error " + event.data +
+          ". This video may not allow embedded playback. Try Next Search.";
       }
     }
   });
 };
+const youtubeScript = document.createElement("script");
+youtubeScript.src = "https://www.youtube.com/iframe_api";
+document.head.appendChild(youtubeScript);
 
-const script = document.createElement("script");
-script.src = "https://www.youtube.com/iframe_api";
-document.head.appendChild(script);
-
-function getPrompts() {
-  return promptsInput.value
-    .split("\n")
-    .map(text => text.trim())
-    .filter(Boolean);
-}
-
-
-let remainingPrompts = [];
-let previousPromptList = "";
-
-function choosePrompt() {
-  const prompts = [...new Set(getPrompts())];
-
-  if (!prompts.length) return null;
-
-  const currentList = JSON.stringify(prompts);
-
-  if (currentList !== previousPromptList) {
-    previousPromptList = currentList;
-    remainingPrompts = [];
-  }
-
-  if (remainingPrompts.length === 0) {
-    remainingPrompts = [...prompts];
-
-    for (let i = remainingPrompts.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-
-      [remainingPrompts[i], remainingPrompts[j]] =
-        [remainingPrompts[j], remainingPrompts[i]];
-    }
-  }
-
-  return remainingPrompts.pop();
-}
-
-
-async function getVideos(prompt, key) {
-  if (searchCache.has(prompt)) {
-    return searchCache.get(prompt);
-  }
-
-  const params = new URLSearchParams({
-    part: "snippet",
-    type: "video",
-    videoEmbeddable: "true",
-    maxResults: "50",
-    q: prompt,
-    key: key
-  });
-
-  const response = await fetch(
-    "https://www.googleapis.com/youtube/v3/search?" +
-    params.toString()
-  );
-
-  const data = await response.json();
-
-  if (!response.ok) {
-    throw new Error(
-      data.error?.message || "YouTube search failed."
-    );
-  }
-
-  const videos = (data.items || [])
-    .filter(item => item.id?.videoId)
-    .map(item => ({
-      id: item.id.videoId,
-      title: item.snippet.title
-    }));
-
-  searchCache.set(prompt, videos);
-  return videos;
-}
-
-function playSelectedVideo(video) {
-  pendingVideo = video;
+function playYouTube(video) {
+  pendingYouTubeVideo = video;
   titleText.textContent = video.title;
-
-  if (!playerReady) {
+  if (!youtubeReady) {
     statusText.textContent = "Waiting for YouTube player...";
     return;
   }
-
-  statusText.textContent = "Starting video...";
-
-  player.loadVideoById(video.id);
-  player.unMute();
-  player.playVideo();
+  statusText.textContent = "Starting YouTube video...";
+  youtubePlayer.loadVideoById(video.id);
+  youtubePlayer.unMute();
+  youtubePlayer.playVideo();
 }
 
-async function nextSearch() {
-  const prompts = getPrompts();
-  const key = apiKeyInput.value.trim();
-
-  if (!prompts.length) {
-    statusText.textContent = "Enter search prompts first.";
-    return;
-  }
-
-  if (!key) {
-    statusText.textContent = "Enter your YouTube API key.";
-    return;
-  }
-
-  running = true;
-  const currentRequest = ++requestNumber;
-  statusText.textContent = "Searching YouTube...";
-
-  try {
-    const prompt = choosePrompt();
-    const videos = await getVideos(prompt, key);
-
-    if (!running || currentRequest !== requestNumber) return;
-
-    const available = videos.filter(
-      video => !playedVideos.has(video.id)
-    );
-
-    if (!available.length) {
-      statusText.textContent =
-        "No new videos for this prompt. Try Next Search.";
-      return;
-    }
-
-    const video = available[
-      Math.floor(Math.random() * available.length)
-    ];
-
-    playedVideos.add(video.id);
-    playSelectedVideo(video);
-
-  } catch (error) {
-    if (currentRequest === requestNumber) {
-      statusText.textContent = "Error: " + error.message;
-    }
-  }
+async function youtubeResults(query, apiKey, signal) {
+  if (videoSearchCache.has(query)) return videoSearchCache.get(query);
+  const params = new URLSearchParams({part: "snippet", type: "video",
+    videoEmbeddable: "true", maxResults: "50", q: query, key: apiKey});
+  const response = await fetch("https://www.googleapis.com/youtube/v3/search?" + params, {signal});
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error?.message || "YouTube search failed (" + response.status + ")");
+  const videos = (data.items || []).filter(item => item.id?.videoId).map(item => ({
+    id: item.id.videoId, title: item.snippet?.title || "Untitled video"
+  }));
+  videoSearchCache.set(query, videos);
+  return videos;
 }
-
-document.getElementById("startButton").onclick = () => {
-  searchIndex = 0;
-  nextSearch();
-};
-
-document.getElementById("skipButton").onclick = nextSearch;
-
-document.getElementById("stopButton").onclick = () => {
-  running = false;
-  requestNumber++;
-  pendingVideo = null;
-
-  if (playerReady) {
-    player.stopVideo();
-  }
-
-  titleText.textContent = "";
-  statusText.textContent = "Stopped.";
-};
-  
-const spotifyClientId = "57ba085f8fe8486aa6c7167eb6207d72";
-const spotifyRedirect = "https://alexanderbconley-blip.github.io/music-discovery-player/";
-const spotifyStatus = document.getElementById("spotifyStatus");
 
 function base64url(bytes) {
   return btoa(String.fromCharCode(...bytes))
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/, "");
+    .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
-async function connectSpotify() {
-  const bytes = crypto.getRandomValues(new Uint8Array(64));
-  const verifier = base64url(bytes);
-  const digest = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(verifier)
-  );
-  const challenge = base64url(new Uint8Array(digest));
-  const state = base64url(
-    crypto.getRandomValues(new Uint8Array(16))
-  );
+// Preserve search settings through Spotify's redirect, but never store the YouTube key.
+function saveDiscoverySettings() {
+  sessionStorage.setItem("discovery_prompts", promptsInput.value);
+  sessionStorage.setItem("discovery_translate", translationToggle.checked ? "1" : "0");
+  sessionStorage.setItem("discovery_language", languageSelector.value);
+  sessionStorage.setItem("discovery_platform", $("musicPlatform").value);
+}
+function restoreDiscoverySettings() {
+  const savedPrompts = sessionStorage.getItem("discovery_prompts");
+  if (savedPrompts !== null) promptsInput.value = savedPrompts;
+  translationToggle.checked = sessionStorage.getItem("discovery_translate") === "1";
+  languageSelector.disabled = !translationToggle.checked;
+  const savedLanguage = sessionStorage.getItem("discovery_language");
+  if (languageNames.has(savedLanguage) || savedLanguage === "random") {
+    languageSelector.value = savedLanguage;
+  }
+  const savedPlatform = sessionStorage.getItem("discovery_platform");
+  if (["both", "youtube", "spotify"].includes(savedPlatform)) {
+    $("musicPlatform").value = savedPlatform;
+  }
+  translationStatus.textContent = translationToggle.checked
+    ? "Translation enabled — " + languageSelector.options[languageSelector.selectedIndex].text
+    : "Translation is off.";
+}
+restoreDiscoverySettings();
 
+// Spotify OAuth: PKCE (no client secret is stored in this page).
+async function connectSpotify() {
+  saveDiscoverySettings();
+  const verifier = base64url(crypto.getRandomValues(new Uint8Array(64)));
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier));
+  const state = base64url(crypto.getRandomValues(new Uint8Array(16)));
   sessionStorage.setItem("spotify_verifier", verifier);
   sessionStorage.setItem("spotify_state", state);
-
-  const params = new URLSearchParams({
-    client_id: spotifyClientId,
-    response_type: "code",
-    redirect_uri: spotifyRedirect,
-    code_challenge_method: "S256",
-    code_challenge: challenge,
-    state: state,
-    scope: [
-      "streaming",
-      "user-read-private",
-      "user-read-email",
-      "user-read-playback-state",
-      "user-modify-playback-state"
-    ].join(" ")
-  });
-
-  window.location.href =
-    "https://accounts.spotify.com/authorize?" + params;
+  const params = new URLSearchParams({client_id: spotifyClientId,
+    response_type: "code", redirect_uri: spotifyRedirect,
+    code_challenge_method: "S256", code_challenge: base64url(new Uint8Array(digest)),
+    state, scope: ["streaming", "user-read-private", "user-read-email",
+      "user-read-playback-state", "user-modify-playback-state"].join(" ")});
+  window.location.href = "https://accounts.spotify.com/authorize?" + params;
 }
+$("spotifyLogin").addEventListener("click", () => {
+  connectSpotify().catch(error => {
+    spotifyStatus.textContent = "Spotify connection could not start: " + error.message;
+  });
+});
 
-document.getElementById("spotifyLogin")
-  .addEventListener("click", connectSpotify);
+async function exchangeSpotifyCode(code, verifier) {
+  const response = await fetch("https://accounts.spotify.com/api/token", {
+    method: "POST", headers: {"Content-Type": "application/x-www-form-urlencoded"},
+    body: new URLSearchParams({client_id: spotifyClientId, grant_type: "authorization_code",
+      code, redirect_uri: spotifyRedirect, code_verifier: verifier})
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error_description || data.error || "Spotify login failed");
+  saveSpotifyTokens(data);
+}
+function saveSpotifyTokens(data) {
+  sessionStorage.setItem("spotify_access_token", data.access_token);
+  sessionStorage.setItem("spotify_expires_at", String(Date.now() + data.expires_in * 1000));
+  if (data.refresh_token) sessionStorage.setItem("spotify_refresh_token", data.refresh_token);
+}
+let refreshPromise = null;
+async function spotifyToken() {
+  const token = sessionStorage.getItem("spotify_access_token");
+  if (!token) throw new Error("Connect Spotify Premium first.");
+  const expiry = Number(sessionStorage.getItem("spotify_expires_at") || 0);
+  if (!expiry || Date.now() < expiry - 60000) return token;
+  const refreshToken = sessionStorage.getItem("spotify_refresh_token");
+  if (!refreshToken) throw new Error("Your Spotify session expired. Reconnect Spotify.");
+  if (!refreshPromise) {
+    refreshPromise = (async () => {
+      const response = await fetch("https://accounts.spotify.com/api/token", {
+        method:"POST", headers:{"Content-Type":"application/x-www-form-urlencoded"},
+        body:new URLSearchParams({grant_type:"refresh_token", refresh_token:refreshToken,
+          client_id:spotifyClientId})
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error("Spotify session expired. Reconnect Spotify.");
+      saveSpotifyTokens(data);
+      return data.access_token;
+    })().finally(() => {refreshPromise = null;});
+  }
+  return refreshPromise;
+}
 
 async function handleSpotifyCallback() {
   const params = new URLSearchParams(window.location.search);
   const code = params.get("code");
   const error = params.get("error");
-
   if (!code && !error) return;
-
   if (error) {
     spotifyStatus.textContent = "Spotify authorization: " + error;
     return;
   }
-
-  const expectedState = sessionStorage.getItem("spotify_state");
-
-  if (!expectedState ||
-      params.get("state") !== expectedState) {
-    spotifyStatus.textContent = "Spotify security check failed.";
+  if (!sessionStorage.getItem("spotify_state") ||
+      params.get("state") !== sessionStorage.getItem("spotify_state")) {
+    spotifyStatus.textContent = "Spotify security check failed. Reconnect Spotify.";
     return;
   }
-
-  const verifier = sessionStorage.getItem("spotify_verifier");
-
   try {
-    const response = await fetch(
-      "https://accounts.spotify.com/api/token", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded"
-        },
-        body: new URLSearchParams({
-          client_id: spotifyClientId,
-          grant_type: "authorization_code",
-          code: code,
-          redirect_uri: spotifyRedirect,
-          code_verifier: verifier
-        })
-      }
-    );
-
-    const data = await response.json();
-
-    if (!response.ok) {
-      throw new Error(data.error_description || data.error);
-    }
-
-    // Store the access token for this browser tab only.
-    sessionStorage.setItem(
-      "spotify_access_token",
-      data.access_token
-    );
-
-    spotifyStatus.textContent =
-      "Spotify Premium connected successfully!";
-
+    await exchangeSpotifyCode(code, sessionStorage.getItem("spotify_verifier"));
+    spotifyStatus.textContent = "Spotify Premium authorized for this tab.";
     history.replaceState({}, "", spotifyRedirect);
-
-  } catch (error) {
-    spotifyStatus.textContent =
-      "Spotify connection failed: " + error.message;
+  } catch (e) {
+    spotifyStatus.textContent = "Spotify login failed: " + e.message;
   } finally {
     sessionStorage.removeItem("spotify_verifier");
     sessionStorage.removeItem("spotify_state");
   }
 }
-
-handleSpotifyCallback();
-
+handleSpotifyCallback().catch(console.error);
 if (sessionStorage.getItem("spotify_access_token")) {
-  spotifyStatus.textContent =
-    "Spotify authorized for this browser session.";
+  spotifyStatus.textContent = "Spotify authorized for this browser tab.";
 }
 
-document.getElementById("testSpotifySearch").onclick = async () => {
-  const result = document.getElementById("spotifySearchResult");
-  const token = sessionStorage.getItem("spotify_access_token");
+window.onSpotifyWebPlaybackSDKReady = () => {spotifySdkReady = true;};
+const spotifyScript = document.createElement("script");
+spotifyScript.src = "https://sdk.scdn.co/spotify-player.js";
+document.head.appendChild(spotifyScript);
 
-  if (!token) {
-    result.textContent = "Please connect Spotify Premium again.";
-    return;
+// Called directly from a click handler so browsers can unlock Spotify audio.
+async function prepareSpotifyPlayer() {
+  if (!spotifySdkReady || !window.Spotify) {
+    throw new Error("Spotify player is loading. Please try again shortly.");
   }
-
-  const prompts = getPrompts();
-
-  if (!prompts.length) {
-    result.textContent = "Enter at least one search prompt.";
-    return;
-  }
-
-const prompt =
-  prompts[Math.floor(Math.random() * prompts.length)];
-
-  result.textContent = "Searching Spotify for: " + prompt;
-
-  try {
-    const params = new URLSearchParams({
-      q: prompt,
-      type: "track",
-      limit: "10"
-    });
-
-    const response = await fetch(
-      "https://api.spotify.com/v1/search?" + params,
-      {
-        headers: {
-          Authorization: "Bearer " + token
-        }
-      }
-    );
-
-    const data = await response.json();
-
-    if (!response.ok) {
-      throw new Error(data.error?.message || "Spotify search failed");
-    }
-
-    const tracks = data.tracks?.items || [];
-
-    if (!tracks.length) {
-      result.textContent = "No matching tracks found.";
-      return;
-    }
-
-    const track = tracks[Math.floor(Math.random() * tracks.length)];
-
-    result.replaceChildren();
-
-    const description = document.createElement("span");
-    description.textContent =
-      "Found: " + track.name + " — " +
-      track.artists.map(a => a.name).join(", ") + " ";
-
-    const link = document.createElement("a");
-    link.href = track.external_urls.spotify;
-    link.target = "_blank";
-    link.rel = "noopener noreferrer";
-    link.textContent = "Open in Spotify";
-
-    result.append(description, link);
-
-  } catch (error) {
-    result.textContent = "Error: " + error.message;
-  }
-};
-
-/* SPOTIFY AUTOMATIC PLAYBACK TEST */
-
-let spotifyAudioPlayer = null;
-let spotifyDeviceId = null;
-let spotifyDevicePromise = null;
-let spotifySDKLoaded = false;
-let spotifyTransferred = false;
-
-const spotifyHeard = new Set();
-
-window.onSpotifyWebPlaybackSDKReady = () => {
-  spotifySDKLoaded = true;
-};
-
-const spotifySDKScript = document.createElement("script");
-spotifySDKScript.src =
-  "https://sdk.scdn.co/spotify-player.js";
-document.head.appendChild(spotifySDKScript);
-
-async function prepareSpotifyAudio() {
-  if (!spotifySDKLoaded) {
-    throw new Error(
-      "Spotify player is loading. Please try again shortly."
-    );
-  }
-
-  if (!spotifyAudioPlayer) {
-    spotifyAudioPlayer = new Spotify.Player({
+  if (!spotifyPlayer) {
+    spotifyPlayer = new Spotify.Player({
       name: "Music Discovery Player",
       getOAuthToken: callback => {
-        callback(
-          sessionStorage.getItem("spotify_access_token") || ""
-        );
-      },
-      volume: 0.7
-    });
-
-    spotifyDevicePromise = new Promise((resolve, reject) => {
-      spotifyAudioPlayer.addListener(
-        "ready",
-        ({ device_id }) => {
-          spotifyDeviceId = device_id;
-          resolve(device_id);
-        }
-      );
-
-      for (const type of [
-        "initialization_error",
-        "authentication_error",
-        "account_error"
-      ]) {
-        spotifyAudioPlayer.addListener(type, ({ message }) => {
-          reject(new Error(message));
+        spotifyToken().then(callback).catch(error => {
+          spotifyStatus.textContent = error.message;
+          callback("");
         });
-      }
-
-      spotifyAudioPlayer.connect().then(connected => {
-        if (!connected) {
-          reject(new Error("Spotify player could not connect."));
+      }, volume: 0.7
+    });
+    spotifyDevicePromise = new Promise((resolve, reject) => {
+      spotifyPlayer.addListener("ready", ({device_id}) => {
+        spotifyDeviceId = device_id;
+        resolve(device_id);
+      });
+      spotifyPlayer.addListener("not_ready", ({device_id}) => {
+        if (spotifyDeviceId === device_id) {
+          spotifyDeviceId = null;
+          spotifyTransferred = false;
+          spotifyStatus.textContent = "Spotify device disconnected. Try reconnecting Spotify.";
         }
+      });
+      spotifyPlayer.addListener("autoplay_failed", () => {
+        statusText.textContent = "Spotify autoplay was blocked; click Next Search to try again.";
+      });
+      for (const eventName of ["initialization_error", "authentication_error", "account_error"]) {
+        spotifyPlayer.addListener(eventName, ({message}) => reject(new Error(message)));
+      }
+      spotifyPlayer.connect().then(ok => {
+        if (!ok) reject(new Error("Spotify player could not connect."));
       }).catch(reject);
     });
   }
-
-  // Activate playback from the user's button click.
-  spotifyAudioPlayer.activateElement();
-
+  spotifyPlayer.activateElement();
   return spotifyDeviceId || await spotifyDevicePromise;
 }
 
 async function spotifyRequest(path, token, options = {}) {
-  const response = await fetch(
-    "https://api.spotify.com/v1/" + path,
-    {
-      ...options,
-      headers: {
-        Authorization: "Bearer " + token,
-        ...(options.headers || {})
-      }
-    }
-  );
-
+  const response = await fetch("https://api.spotify.com/v1/" + path, {
+    ...options,
+    headers: {Authorization:"Bearer " + token, ...(options.headers || {})}
+  });
   if (!response.ok) {
-    let message = "Spotify error " + response.status;
-
+    let message = "Spotify HTTP " + response.status;
     try {
       const data = await response.json();
-      message += ": " +
-        (data.error?.message || JSON.stringify(data));
+      message += ": " + (data.error?.message || JSON.stringify(data));
     } catch (_) {}
-
     throw new Error(message);
   }
-
   return response;
 }
 
-document.getElementById("testSpotifySearch").onclick =
-  async function () {
-    const result =
-      document.getElementById("spotifySearchResult");
-
-    const token =
-      sessionStorage.getItem("spotify_access_token");
-
-    if (!token) {
-      result.textContent = "Please reconnect Spotify.";
-      return;
-    }
-
-    const prompts = getPrompts();
-
-    if (!prompts.length) {
-      result.textContent = "Enter a search prompt first.";
-      return;
-    }
-
-    result.textContent =
-      "Preparing Spotify and searching for a song...";
-
-    try {
-      // Activate audio before asynchronous searching.
-      const deviceId = await prepareSpotifyAudio();
-
-      const prompt = choosePrompt();
-
-      const params = new URLSearchParams({
-        q: prompt,
-        type: "track",
-        limit: "10"
-      });
-
-      const searchResponse = await spotifyRequest(
-        "search?" + params,
-        token
-      );
-
-      const data = await searchResponse.json();
-
-      const available = (data.tracks?.items || [])
-        .filter(track =>
-          track &&
-          track.uri &&
-          !spotifyHeard.has(track.id)
-        );
-
-      if (!available.length) {
-        result.textContent =
-          "No new tracks found. Try another search.";
-        return;
-      }
-
-      const track = available[
-        Math.floor(Math.random() * available.length)
-      ];
-
-      result.textContent =
-        "Starting: " + track.name + " — " +
-        track.artists.map(a => a.name).join(", ");
-
-      // Select our browser as the Spotify device.
-      if (!spotifyTransferred) {
-        await spotifyRequest("me/player", token, {
-          method: "PUT",
-          headers: {
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({
-            device_ids: [deviceId],
-            play: false
-          })
-        });
-
-        spotifyTransferred = true;
-
-        await new Promise(resolve =>
-          setTimeout(resolve, 500)
-        );
-      }
-
-      // Start the selected track automatically.
-      await spotifyRequest(
-        "me/player/play?device_id=" +
-        encodeURIComponent(deviceId),
-        token,
-        {
-          method: "PUT",
-          headers: {
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({
-            uris: [track.uri]
-          })
-        }
-      );
-
-      spotifyHeard.add(track.id);
-
-      // Stop YouTube if it is playing.
-      if (playerReady) {
-        player.stopVideo();
-      }
-
-      result.textContent =
-        "Spotify playback requested: " +
-        track.name + " — " +
-        track.artists.map(a => a.name).join(", ");
-
-    } catch (error) {
-      result.textContent =
-        "Spotify playback error: " + error.message;
-    }
-  };
-
-/* COMBINED YOUTUBE AND SPOTIFY CONTROLS */
-
-function chooseMusicPlatform() {
-  const selected =
-    document.getElementById("musicPlatform").value;
-
-  if (selected === "both") {
-    return Math.random() < 0.5 ? "youtube" : "spotify";
-  }
-
-  return selected;
+function choosePlatform() {
+  const selected = $("musicPlatform").value;
+  if (selected !== "both") return selected;
+  const spotifyAvailable = !!sessionStorage.getItem("spotify_access_token");
+  const youtubeAvailable = !!apiKeyInput.value.trim();
+  if (spotifyAvailable && youtubeAvailable) return Math.random() < .5 ? "spotify" : "youtube";
+  if (spotifyAvailable) return "spotify";
+  return "youtube";
 }
 
-function combinedNextSearch() {
-  if (!getPrompts().length) {
-    statusText.textContent = "Enter search prompts first.";
+async function discoverYouTube(theme, requestId, signal) {
+  const key = apiKeyInput.value.trim();
+  if (!key) throw new Error("Enter your YouTube API key for YouTube searches.");
+  for await (const {query, language} of searchQueries(theme, requestId, signal)) {
+    if (!isCurrent(requestId)) return;
+    statusText.textContent = "Searching YouTube — " + language + ": " + query;
+    const results = await youtubeResults(query, key, signal);
+    if (!isCurrent(requestId)) return;
+    const available = results.filter(video => !playedYouTube.has(video.id));
+    if (!available.length) continue;
+    const video = available[Math.floor(Math.random() * available.length)];
+    playedYouTube.add(video.id);
+    await pauseSpotify();
+    if (!isCurrent(requestId)) return;
+    playYouTube(video);
     return;
   }
-
-  const platform = chooseMusicPlatform();
-
-  if (platform === "spotify") {
-    running = false;
-    requestNumber++;
-    pendingVideo = null;
-
-    if (playerReady) {
-      player.stopVideo();
-    }
-
-    statusText.textContent = "Searching Spotify...";
-
-    // Use the existing Spotify search and player.
-    document.getElementById("testSpotifySearch").click();
-
-  } else {
-    if (!apiKeyInput.value.trim()) {
-      statusText.textContent =
-        "Enter your YouTube API key.";
-      return;
-    }
-
-    // Stop Spotify before playing YouTube.
-    if (spotifyAudioPlayer) {
-      spotifyAudioPlayer.pause().catch(console.error);
-    }
-
-    statusText.textContent = "Searching YouTube...";
-    nextSearch();
-  }
+  if (isCurrent(requestId)) statusText.textContent = "No new YouTube videos for this theme. Try Next Search.";
 }
 
-// Connect both buttons to the combined system.
-document.getElementById("startButton").onclick = () => {
-  searchIndex = 0;
-  combinedNextSearch();
-};
-
-document.getElementById("skipButton").onclick =
-  combinedNextSearch;
-
-// Stop both platforms.
-document.getElementById("stopButton").onclick = () => {
-  running = false;
-  requestNumber++;
-  pendingVideo = null;
-
-  if (playerReady) {
-    player.stopVideo();
+async function discoverSpotify(theme, requestId, signal, previousPause) {
+  // Browser audio activation must occur immediately after clicking Start/Next.
+  const devicePromise = prepareSpotifyPlayer();
+  await previousPause;
+  const deviceId = await devicePromise;
+  if (!isCurrent(requestId)) return;
+  const token = await spotifyToken();
+  if (!isCurrent(requestId)) return;
+  for await (const {query, language} of searchQueries(theme, requestId, signal)) {
+    if (!isCurrent(requestId)) return;
+    statusText.textContent = "Searching Spotify — " + language + ": " + query;
+    const params = new URLSearchParams({q: query, type:"track", limit:"50"});
+    const response = await spotifyRequest("search?" + params, token, {signal});
+    const data = await response.json();
+    if (!isCurrent(requestId)) return;
+    const available = (data.tracks?.items || []).filter(item =>
+      item?.uri && item.id && !playedSpotify.has(item.id));
+    if (!available.length) continue;
+    const track = available[Math.floor(Math.random() * available.length)];
+    titleText.textContent = track.name + " — " + track.artists.map(a => a.name).join(", ");
+    statusText.textContent = "Starting Spotify playback...";
+    stopYouTube();
+    if (!spotifyTransferred) {
+      await spotifyRequest("me/player", token, {method:"PUT", signal,
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({device_ids:[deviceId], play:false})});
+      if (!isCurrent(requestId)) return;
+      spotifyTransferred = true;
+    }
+    await spotifyRequest("me/player/play?device_id=" + encodeURIComponent(deviceId),
+      token, {method:"PUT", signal,
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({uris:[track.uri]})});
+    if (!isCurrent(requestId)) {
+      // A cancelled search should not continue playing an outdated result.
+      await pauseSpotify();
+      return;
+    }
+    playedSpotify.add(track.id);
+    statusText.textContent = "Spotify playback requested: " + track.name;
+    return;
   }
+  if (isCurrent(requestId)) statusText.textContent = "No new Spotify tracks for this theme. Try Next Search.";
+}
 
-  if (spotifyAudioPlayer) {
-    spotifyAudioPlayer.pause().catch(console.error);
+function nextSearch() {
+  if (!getPrompts().length) {
+    statusText.textContent = "Enter at least one search prompt first.";
+    return;
   }
+  const platform = choosePlatform();
+  if (platform === "youtube" && !apiKeyInput.value.trim()) {
+    statusText.textContent = "Enter your YouTube API key first.";
+    return;
+  }
+  if (platform === "spotify" && !sessionStorage.getItem("spotify_access_token")) {
+    statusText.textContent = "Connect Spotify Premium first.";
+    return;
+  }
+  const theme = choosePrompt();
+  const requestId = cancelPendingWork();
+  stopped = false;
+  // 'Next Search' should stop the previous song immediately.
+  stopYouTube();
+  const previousPause = pauseSpotify();
+  statusText.textContent = "Preparing " + (platform === "spotify" ? "Spotify" : "YouTube") + " search...";
+  const signal = activeController.signal;
+  const task = platform === "spotify"
+    ? discoverSpotify(theme, requestId, signal, previousPause)
+    : discoverYouTube(theme, requestId, signal);
+  task.catch(error => {
+    if (!isCurrent(requestId) || error.name === "AbortError") return;
+    statusText.textContent = "Error: " + error.message;
+  });
+}
 
+$("startButton").addEventListener("click", nextSearch);
+$("skipButton").addEventListener("click", nextSearch);
+$("stopButton").addEventListener("click", () => {
+  cancelPendingWork();
+  stopped = true;
+  stopYouTube();
+  pauseSpotify();
+  titleText.textContent = "";
   statusText.textContent = "Stopped.";
-};
-
+});
 </script>
-
 </body>
 </html>
