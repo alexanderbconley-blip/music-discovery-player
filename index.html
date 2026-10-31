@@ -607,7 +607,7 @@ async function discoverSpotify(theme, requestId, signal, previousPause) {
   if (isCurrent(requestId)) statusText.textContent = "No new Spotify tracks for this theme. Try Next Search.";
 }
 
-function nextSearch() {
+function discoverNewSong() {
   if (!getPrompts().length) {
     statusText.textContent = "Enter at least one search prompt first.";
     return;
@@ -638,19 +638,28 @@ function nextSearch() {
   });
 }
 
-// A Previous press replays a stored identifier, never a fresh search.
-// Calling the Spotify SDK activation synchronously in the click handler
-// helps comply with browser autoplay restrictions.
-function previousSong() {
-  if (historyPosition <= 0) return;
-  const targetPosition = historyPosition - 1;
+// Next Search retraces listening history before discovering anything new.
+// Start Discovery always begins a fresh search.
+function nextSearch() {
+  if (historyPosition >= 0 && historyPosition < listeningHistory.length - 1) {
+    navigateHistory(1);
+    return;
+  }
+  discoverNewSong();
+}
+
+// Previous and forward navigation replay saved identifiers, not fresh searches.
+// Spotify SDK activation begins within the click handler for browser audio access.
+function navigateHistory(direction) {
+  const targetPosition = historyPosition + direction;
+  if (targetPosition < 0 || targetPosition >= listeningHistory.length) return;
   const song = listeningHistory[targetPosition];
   const requestId = cancelPendingWork();
   stopped = false;
   stopYouTube();
   const pauseOldSpotify = pauseSpotify();
   const signal = activeController.signal;
-  statusText.textContent = "Returning to an earlier song...";
+  statusText.textContent = "Replaying a song from listening history...";
 
   if (song.platform === "youtube") {
     // Do not require a YouTube API key to replay an already discovered video.
@@ -660,7 +669,7 @@ function previousSong() {
       updatePreviousButton();
       playYouTube({id: song.id, title: song.title});
     }).catch(error => {
-      if (isCurrent(requestId)) statusText.textContent = "Previous Song: " + error.message;
+      if (isCurrent(requestId)) statusText.textContent = "History replay: " + error.message;
     });
     return;
   }
@@ -691,15 +700,15 @@ function previousSong() {
     historyPosition = targetPosition;
     updatePreviousButton();
     titleText.textContent = song.title;
-    statusText.textContent = "Replaying earlier Spotify song.";
+    statusText.textContent = "Replaying Spotify song from history.";
   })().catch(error => {
     if (isCurrent(requestId) && error.name !== "AbortError")
-      statusText.textContent = "Previous Song error: " + error.message;
+      statusText.textContent = "History replay error: " + error.message;
   });
 }
 
-previousButton.addEventListener("click", previousSong);
-$("startButton").addEventListener("click", nextSearch);
+previousButton.addEventListener("click", () => navigateHistory(-1));
+$("startButton").addEventListener("click", discoverNewSong);
 $("skipButton").addEventListener("click", nextSearch);
 $("stopButton").addEventListener("click", () => {
   cancelPendingWork();
