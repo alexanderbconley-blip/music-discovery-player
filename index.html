@@ -556,7 +556,7 @@ async function discoverSpotify(theme, requestId, signal, previousPause) {
   for await (const {query, language} of searchQueries(theme, requestId, signal)) {
     if (!isCurrent(requestId)) return;
     statusText.textContent = "Searching Spotify — " + language + ": " + query;
-    const params = new URLSearchParams({q: query, type:"track", limit:"50"});
+    const params = new URLSearchParams({q: query, type:"track", limit:"10"});
     const response = await spotifyRequest("search?" + params, token, {signal});
     const data = await response.json();
     if (!isCurrent(requestId)) return;
