@@ -79,6 +79,7 @@
 </select>
 <div>
   <button id="startButton" type="button">Start Discovery</button>
+  <button id="previousButton" type="button" disabled>Previous Song</button>
   <button id="skipButton" type="button">Next Search</button>
   <button id="stopButton" type="button">Stop</button>
 </div>
@@ -101,6 +102,7 @@ const spotifyStatus = $("spotifyStatus");
 const translationToggle = $("autoTranslate");
 const languageSelector = $("translationLanguage");
 const translationStatus = $("translationStatus");
+const previousButton = $("previousButton");
 
 const spotifyClientId = "57ba085f8fe8486aa6c7167eb6207d72";
 const spotifyRedirect = "https://alexanderbconley-blip.github.io/music-discovery-player/";
@@ -109,6 +111,18 @@ const playedYouTube = new Set();
 const playedSpotify = new Set();
 const videoSearchCache = new Map();
 const translationCache = new Map();
+
+// Ordered listening history is intentionally kept only in this open page.
+const listeningHistory = [];
+let historyPosition = -1;
+function updatePreviousButton() {
+  previousButton.disabled = historyPosition <= 0;
+}
+function rememberSong(song) {
+  listeningHistory.push(song);
+  historyPosition = listeningHistory.length - 1;
+  updatePreviousButton();
+}
 
 let pendingYouTubeVideo = null;
 let youtubePlayer = null;
@@ -536,9 +550,10 @@ async function discoverYouTube(theme, requestId, signal) {
     const available = results.filter(video => !playedYouTube.has(video.id));
     if (!available.length) continue;
     const video = available[Math.floor(Math.random() * available.length)];
-    playedYouTube.add(video.id);
     await pauseSpotify();
     if (!isCurrent(requestId)) return;
+    playedYouTube.add(video.id);
+    rememberSong({platform: "youtube", id: video.id, title: video.title});
     playYouTube(video);
     return;
   }
@@ -584,6 +599,8 @@ async function discoverSpotify(theme, requestId, signal, previousPause) {
       return;
     }
     playedSpotify.add(track.id);
+    rememberSong({platform: "spotify", id: track.id, uri: track.uri,
+      title: track.name + " — " + track.artists.map(a => a.name).join(", ")});
     statusText.textContent = "Spotify playback requested: " + track.name;
     return;
   }
@@ -621,6 +638,67 @@ function nextSearch() {
   });
 }
 
+// A Previous press replays a stored identifier, never a fresh search.
+// Calling the Spotify SDK activation synchronously in the click handler
+// helps comply with browser autoplay restrictions.
+function previousSong() {
+  if (historyPosition <= 0) return;
+  const targetPosition = historyPosition - 1;
+  const song = listeningHistory[targetPosition];
+  const requestId = cancelPendingWork();
+  stopped = false;
+  stopYouTube();
+  const pauseOldSpotify = pauseSpotify();
+  const signal = activeController.signal;
+  statusText.textContent = "Returning to an earlier song...";
+
+  if (song.platform === "youtube") {
+    // Do not require a YouTube API key to replay an already discovered video.
+    pauseOldSpotify.then(() => {
+      if (!isCurrent(requestId)) return;
+      historyPosition = targetPosition;
+      updatePreviousButton();
+      playYouTube({id: song.id, title: song.title});
+    }).catch(error => {
+      if (isCurrent(requestId)) statusText.textContent = "Previous Song: " + error.message;
+    });
+    return;
+  }
+
+  // Start SDK preparation while the click is still being handled.
+  const devicePromise = prepareSpotifyPlayer();
+  (async () => {
+    await pauseOldSpotify;
+    const deviceId = await devicePromise;
+    if (!isCurrent(requestId)) return;
+    const token = await spotifyToken();
+    if (!isCurrent(requestId)) return;
+    if (!spotifyTransferred) {
+      await spotifyRequest("me/player", token, {method:"PUT", signal,
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({device_ids:[deviceId], play:false})});
+      if (!isCurrent(requestId)) return;
+      spotifyTransferred = true;
+    }
+    await spotifyRequest("me/player/play?device_id=" + encodeURIComponent(deviceId),
+      token, {method:"PUT", signal,
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({uris:[song.uri]})});
+    if (!isCurrent(requestId)) {
+      await pauseSpotify();
+      return;
+    }
+    historyPosition = targetPosition;
+    updatePreviousButton();
+    titleText.textContent = song.title;
+    statusText.textContent = "Replaying earlier Spotify song.";
+  })().catch(error => {
+    if (isCurrent(requestId) && error.name !== "AbortError")
+      statusText.textContent = "Previous Song error: " + error.message;
+  });
+}
+
+previousButton.addEventListener("click", previousSong);
 $("startButton").addEventListener("click", nextSearch);
 $("skipButton").addEventListener("click", nextSearch);
 $("stopButton").addEventListener("click", () => {
