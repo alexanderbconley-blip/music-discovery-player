@@ -86,7 +86,7 @@
   .prompt-card button { margin: 0; padding: 7px 10px; font-size: 14px; }
   .prompt-card button.explore { min-width: 85px; }
   .prompt-card button.icon-button { min-width: 34px; }
-  .prompt-progress { font-size: 13px; color: #555; }
+  .prompt-progress { font-size: 13px; color: #555; margin: 7px 0 0; }
   .drag-handle { cursor: grab; border: 1px solid #bbb; border-radius: 5px;
     padding: 5px 8px; font-size: 18px; user-select: none; }
   .drag-over { outline: 2px dashed #2465a8; outline-offset: 3px; }
@@ -174,7 +174,7 @@
 <p>Describe the music you're looking for. AI recommends titles and artists; the player finds recordings on YouTube or Spotify as you move through the recommendations.</p>
 
 <h3>AI Discovery Prompts</h3>
-<p class="hint">Add as many prompts as you wish. Each prompt keeps its own recommendations and playback history. Select Explore to begin or return to a prompt. Expand a recommendation list to select a song, or drag over its title and artist to highlight and copy that one recommendation.</p>
+<p class="hint">Add as many prompts as you wish. Each prompt keeps its own recommendations and playback history. Select Explore once to discover and start the first song; select Explore again on a locked prompt to add more recommendations without interrupting playback. Expand a recommendation list to select a song, or drag over its title and artist to highlight and copy that one recommendation.</p>
 <div id="promptList" aria-label="AI discovery prompts"></div>
 <button id="addPrompt" type="button">+ Add Prompt</button>
 <p id="storageWarning" class="hint" role="status"></p>
@@ -187,7 +187,7 @@
   <p class="hint">Secure and deploy your Cloudflare Worker before using AI Discovery.</p>
   <label for="workerUrl">Cloudflare AI Worker URL</label>
   <input id="workerUrl" type="url" placeholder="https://your-worker.your-account.workers.dev/" autocomplete="off">
-  <p class="hint">The Worker URL is not an API secret. Do not enter an OpenAI API key here. This page sends a prompt to your Worker only when you click Explore for an unsearched prompt.</p>
+  <p class="hint">The Worker URL is not an API secret. Do not enter an OpenAI API key here. This page sends an AI request when you first Explore a prompt or click Explore again to request more songs.</p>
   <label for="workerAccessKey">Private Cloudflare Worker Access Key</label>
   <input id="workerAccessKey" type="password" placeholder="Enter your PLAYER_ACCESS_KEY secret value" autocomplete="off" autocapitalize="off" spellcheck="false" aria-describedby="workerAccessKeyHelp">
   <p id="workerAccessKeyHelp" class="hint">Enter the private value you created for PLAYER_ACCESS_KEY in Cloudflare, not the words PLAYER_ACCESS_KEY. The key is sent only to your Cloudflare Worker when requesting new AI recommendations. It is not saved in browser history, exports, or GitHub. Reenter it if you reload the page or return from Spotify sign-in.</p>
@@ -242,7 +242,7 @@
   </div>
 </div>
 <p id="status" aria-live="polite"></p>
-<p class="hint">AI generates each prompt's recommendation list once. Selecting a recommendation searches for that recording when first reached, or replays a previously found recording without searching again. When a recording finishes, the player advances to the next recommendation or the next unexplored prompt. Previous, Next, and Stop also work manually. A gray checkmark means playback started here or you opened the recording directly on YouTube to listen. Search status is displayed separately for each song, and a possible match may not be the exact requested version.</p>
+<p class="hint">Explore creates the first recommendations and attempts to play the first song automatically. Click Explore again on a locked prompt to append new, nonduplicate recommendations without interrupting playback. Your browser may require a Play click to allow sound. Selecting a recommendation searches for that recording when first reached, or replays a previously found recording without searching again. When a recording finishes, the player advances to the next recommendation or the next unexplored prompt. Previous, Next, and Stop also work manually. A gray checkmark means playback started here or you opened the recording directly on YouTube to listen. Search status is displayed separately for each song, and a possible match may not be the exact requested version.</p>
 
 <script>
 "use strict";
@@ -286,6 +286,10 @@ let requestNumber = 0;
 let currentController = null;
 let stopped = true;
 let aiLoading = false;
+// Expanding a prompt uses its own request so playback searches are never aborted.
+let expandingPromptId = null;
+let expansionController = null;
+const expansionMessages = new Map();
 let playbackPaused = false; // Ephemeral UI state; never alters saved music history.
 let spotifyActivationFromStart = null;
 
@@ -321,6 +325,14 @@ function newRequest() {
   if (currentController) currentController.abort();
   currentController = new AbortController();
   return requestNumber;
+}
+function cancelExpansion() {
+  if (expansionController) expansionController.abort();
+  expansionController = null;
+  expandingPromptId = null;
+}
+function recommendationKey(item) {
+  return normalizeName(item.title) + "|" + normalizeName(item.artist);
 }
 function activeSession() {
   return promptSessions.find(p => p.id === activePromptId) || null;
@@ -635,8 +647,16 @@ function renderPromptList() {
     const explore = document.createElement("button");
     explore.type = "button"; explore.className = "explore";
     explore.textContent = "Explore";
-    explore.setAttribute("aria-label", "Explore prompt: " + p.text.slice(0, 70));
-    explore.addEventListener("click", () => { selectPrompt(p.id).catch(console.error); });
+    explore.disabled = aiLoading || expandingPromptId !== null ||
+      (p.explored && p.recommendations.length >= 1000);
+    explore.title = p.explored
+      ? "Generate additional songs for this locked prompt without interrupting playback"
+      : "Discover songs and automatically start the first recording";
+    explore.setAttribute("aria-label", (p.explored ? "Generate more recommendations for prompt: " :
+      "Explore prompt: ") + p.text.slice(0, 70));
+    explore.addEventListener("click", () => {
+      (p.explored ? generateMoreRecommendations(p) : selectPrompt(p.id)).catch(console.error);
+    });
     controls.append(explore);
     head.append(heading, controls);
     const textarea = document.createElement("textarea");
@@ -649,8 +669,18 @@ function renderPromptList() {
     textarea.addEventListener("input", () => { p.text = textarea.value; saveHistory(); });
     const results = document.createElement("div");
     results.className = "prompt-results";
-    if (p.explored) results.append(makeRecommendationPanel(p, "card"));
-    else {
+    if (p.explored) {
+      results.append(makeRecommendationPanel(p, "card"));
+      if (expandingPromptId === p.id || expansionMessages.has(p.id)) {
+        const notice = document.createElement("p");
+        notice.className = "prompt-progress";
+        notice.setAttribute("role", "status");
+        notice.textContent = expandingPromptId === p.id
+          ? "Getting more recommendations... Current playback will continue."
+          : expansionMessages.get(p.id);
+        results.append(notice);
+      }
+    } else {
       const text = document.createElement("span"); text.className = "prompt-progress";
       text.textContent = p.id === loadingPromptId
         ? "Generating recommendations..." : "Not explored yet";
@@ -713,6 +743,8 @@ function renderPromptList() {
           stopAudio();
           statusText.textContent = "Prompt deleted. Select Explore to continue.";
         }
+        if (expandingPromptId === p.id) cancelExpansion();
+        expansionMessages.delete(p.id);
         promptSessions = promptSessions.filter(x => x.id !== p.id);
         openPromptLists.delete(p.id);
         // Always keep one ready-to-edit card, but never keep the deleted
@@ -915,7 +947,13 @@ window.onYouTubeIframeAPIReady = function () {
         }
       },
       onAutoplayBlocked() {
-        statusText.textContent = "Your browser blocked autoplay. Press Play in the video.";
+        // An AI/network request can outlast the browser's user-gesture window.
+        // Switch the existing card control to Play (not Pause) as a fallback.
+        if (!stopped && pendingYouTube && youtubePlaybackId === requestNumber) {
+          playbackPaused = true;
+          statusText.textContent = "Your browser blocked automatic playback. Press Play on this prompt or in the YouTube video.";
+          updateButtons();
+        }
       },
       onError(event) {
         if (stopped || !pendingYouTube || youtubePlaybackId !== requestNumber) return;
@@ -1573,13 +1611,16 @@ async function generateRecommendations(p) {
     if (!isCurrent(id)) return;
     const list = cleanRecommendations(payload);
     if (!list.length) throw new Error("AI returned no valid title-and-artist recommendations.");
+    expansionMessages.delete(p.id);
     p.recommendations = list;
     p.explored = true;
     p.index = 0;
     statusText.textContent = "Received " + list.length + " recommendations. Searching the first one...";
     saveHistory(); updateDisplay();
-    // Subsequent Next/Previous navigation never calls AI.
-    goTo(p, 0);
+    // Immediately attempt the first song when the recommendations arrive.
+    // Browsers may block sound after the asynchronous AI/recording searches;
+    // the existing Play control remains a fallback.
+    goTo(p, 0).catch(error => console.error("First-song playback failed:", error));
   } catch (e) {
     if (!isCurrent(id) || e.name === "AbortError") return;
     statusText.textContent = "AI request failed: " + e.message + ". You can edit this prompt and try again.";
@@ -1588,6 +1629,104 @@ async function generateRecommendations(p) {
     if (loadingPromptId === p.id) loadingPromptId = null;
     if (activePromptId === p.id) aiLoading = false;
     updateDisplay();
+  }
+}
+
+// More recommendations are appended to the same locked card. Importantly,
+// this request NEVER calls newRequest(), stopAudio(), goTo(), or changes the
+// active prompt/index, so a currently playing song continues uninterrupted.
+async function generateMoreRecommendations(p) {
+  if (!p?.explored || aiLoading || expandingPromptId !== null ||
+      !promptSessions.includes(p)) return;
+  if (p.recommendations.length >= 1000) {
+    expansionMessages.set(p.id, "This prompt has reached the 1,000-song history limit.");
+    renderPromptList();
+    return;
+  }
+  const prompt = p.text.trim(); // Locked after first exploration.
+  const workerUrl = workerUrlInput.value.trim();
+  const workerAccessKey = workerAccessKeyInput.value.trim();
+  if (!workerUrl || !workerAccessKey) {
+    expansionMessages.set(p.id, "Add your Cloudflare Worker URL and private access key in Connection setup first.");
+    renderPromptList();
+    return;
+  }
+  let url;
+  try {
+    url = new URL(workerUrl);
+    if (url.protocol !== "https:" || url.username || url.password)
+      throw new Error("Invalid URL");
+  } catch (_) {
+    expansionMessages.set(p.id, "Enter a valid HTTPS Cloudflare Worker URL.");
+    renderPromptList();
+    return;
+  }
+  if (!prompt || prompt.length > 2000) {
+    expansionMessages.set(p.id, "This Worker supports prompt text between 1 and 2,000 characters.");
+    renderPromptList();
+    return;
+  }
+  // Send recent titles so the future Worker update can avoid them. Existing
+  // Workers that only read 'prompt' will ignore this optional extra field.
+  // The client ALSO deduplicates against every song on this card.
+  const data = {
+    prompt,
+    excludeSongs: p.recommendations.slice(-40).map(item => ({
+      title: item.title.slice(0, 120), artist: item.artist.slice(0, 120)
+    }))
+  };
+  // Keep the JSON body under the current Worker's 10 KB request limit.
+  while (new TextEncoder().encode(JSON.stringify(data)).length > 8000 && data.excludeSongs.length) {
+    data.excludeSongs.shift();
+  }
+  const controller = new AbortController();
+  expandingPromptId = p.id;
+  expansionController = controller;
+  expansionMessages.delete(p.id);
+  renderPromptList();
+  try {
+    const response = await fetch(url.href, {
+      method: "POST", signal: controller.signal,
+      headers: {"Content-Type": "application/json", "X-Player-Key": workerAccessKey},
+      body: JSON.stringify(data)
+    });
+    if (!response.ok) {
+      let reason = "Worker returned HTTP " + response.status;
+      try { reason = (await response.json()).error || reason; } catch (_) {}
+      throw new Error(reason);
+    }
+    const payload = await response.json();
+    if (controller.signal.aborted || !promptSessions.includes(p)) return;
+    const existing = new Set(p.recommendations.map(recommendationKey));
+    const fresh = cleanRecommendations(payload).filter(item => {
+      const key = recommendationKey(item);
+      if (existing.has(key)) return false;
+      existing.add(key);
+      return true;
+    }).slice(0, Math.max(0, 1000 - p.recommendations.length));
+    if (fresh.length) {
+      p.recommendations.push(...fresh);
+      saveHistory();
+      // Re-render the selected player's counter, but never move its index.
+      // A previously completed card can be replayed with its new songs.
+      if (activePromptId === p.id && reachedSessionEnd) reachedSessionEnd = false;
+      renderPlayerRecommendations();
+      updateButtons();
+      expansionMessages.set(p.id, "Added " + fresh.length + " new recommendation" +
+        (fresh.length === 1 ? "" : "s") + ". " + p.recommendations.length + " total.");
+    } else {
+      expansionMessages.set(p.id, "All returned recommendations were duplicates or invalid. You can try Explore again.");
+    }
+  } catch (error) {
+    if (controller.signal.aborted || !promptSessions.includes(p) || error.name === "AbortError") return;
+    expansionMessages.set(p.id, "Could not get more recommendations: " + error.message);
+  } finally {
+    if (expansionController === controller) {
+      expansionController = null;
+      expandingPromptId = null;
+    }
+    renderPromptList();
+    updateButtons();
   }
 }
 
@@ -1717,6 +1856,7 @@ $("cancelHistoryImport").addEventListener("click", () => {
 $("confirmHistoryImport").addEventListener("click", () => {
   if (!pendingHistoryImport) return;
   newRequest(); stopped = true; aiLoading = false; loadingPromptId = null;
+  cancelExpansion(); expansionMessages.clear();
   stopAudio(); reachedSessionEnd = false;
   promptSessions = pendingHistoryImport.sessions;
   activePromptId = pendingHistoryImport.activePromptId;
